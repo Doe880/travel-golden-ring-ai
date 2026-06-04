@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>AI-помощник по Золотому кольцу</title>
+
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- OpenLayers -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/ol@10.3.1/ol.css"
+  />
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/ol@10.3.1/dist/ol.js"
+    defer
+  ></script>
+
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="hero__content">
+        <p class="badge">AI Travel Planner</p>
+
+        <h1>Путешествие по Золотому кольцу</h1>
+
+        <p class="hero__text">
+          Построй маршрут, выбери город, найди достопримечательности,
+          еду, сувениры и красивые места для прогулки.
+        </p>
+
+        <div class="search-card">
+          <div class="city-buttons" id="cityButtons"></div>
+
+          <div class="input-row">
+            <input
+              id="queryInput"
+              type="text"
+              placeholder="Например: составь маршрут на 2 дня по Суздалю и Владимиру"
+            />
+
+            <button id="askButton">Спросить</button>
+          </div>
+
+          <div class="quick-actions">
+            <button data-prompt="Составь маршрут на 1 день">Маршрут на 1 день</button>
+            <button data-prompt="Составь маршрут на 2 дня">Маршрут на 2 дня</button>
+            <button data-prompt="Что посмотреть с детьми?">С детьми</button>
+            <button data-prompt="Что попробовать из еды?">Еда</button>
+            <button data-prompt="Какие сувениры купить?">Сувениры</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="status-section">
+        <div id="selectedCity" class="selected-city">Город не выбран</div>
+        <div id="status" class="status">Готов к запросу</div>
+      </section>
+
+      <section class="result-grid">
+        <article class="answer-card">
+          <h2>Ответ ассистента</h2>
+          <div id="answer" class="answer">
+            Выберите город или задайте вопрос о маршруте.
+          </div>
+
+          <div id="sources" class="sources"></div>
+        </article>
+
+        <aside class="map-card">
+          <h2>Карта маршрута</h2>
+
+          <div class="map-wrapper">
+            <div id="map"></div>
+
+            <div id="mapPopup" class="map-popup">
+              <button id="mapPopupClose" class="map-popup__close">×</button>
+              <div id="mapPopupContent"></div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="places-section">
+        <h2>Места из ответа</h2>
+        <div id="places" class="places-grid"></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

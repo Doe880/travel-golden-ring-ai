@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+.env
+
+.DS_Store
+
+# Можно оставить index.json в репозитории для Render,
+# но если не хочешь коммитить индекс, раскомментируй строку ниже.
+# vector_index/index.json
