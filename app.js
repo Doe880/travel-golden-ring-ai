@@ -1,8 +1,7 @@
-// Для локального запуска:
 const API_URL = "https://travel-golden-ring-ai.onrender.com";
 
-// Для Render после деплоя замени на свой адрес:
-// const API_URL = "https://your-project-name.onrender.com";
+// Для локального запуска можно временно заменить:
+// const API_URL = "http://127.0.0.1:8000";
 
 const cities = [
   "Сергиев Посад",
@@ -29,7 +28,6 @@ const answerEl = document.getElementById("answer");
 const statusEl = document.getElementById("status");
 const selectedCityEl = document.getElementById("selectedCity");
 const placesEl = document.getElementById("places");
-const sourcesEl = document.getElementById("sources");
 
 const mapPopupEl = document.getElementById("mapPopup");
 const mapPopupContentEl = document.getElementById("mapPopupContent");
@@ -90,13 +88,8 @@ function initMap() {
 
   map = new ol.Map({
     target: "map",
-    layers: [
-      osmLayer,
-      markerLayer,
-    ],
+    layers: [osmLayer, markerLayer],
     view: new ol.View({
-      // OpenLayers работает в проекции Web Mercator.
-      // fromLonLat принимает [longitude, latitude].
       center: ol.proj.fromLonLat([39.8, 56.9]),
       zoom: 6,
       minZoom: 5,
@@ -192,17 +185,12 @@ function setLoading(isLoading) {
 }
 
 function renderAnswer(data) {
-  answerEl.textContent = data.answer || "Ответ пустой.";
+  const answer = data.answer || "Ответ пустой.";
 
-  if (data.sources && data.sources.length > 0) {
-    sourcesEl.innerHTML = `
-      <strong>Источники из базы знаний:</strong>
-      <ul>
-        ${data.sources.map((source) => `<li>${escapeHtml(source)}</li>`).join("")}
-      </ul>
-    `;
+  if (window.marked) {
+    answerEl.innerHTML = marked.parse(answer);
   } else {
-    sourcesEl.innerHTML = "";
+    answerEl.textContent = answer;
   }
 }
 
@@ -210,7 +198,11 @@ function renderPlaces(places) {
   placesEl.innerHTML = "";
 
   if (!places || places.length === 0) {
-    placesEl.innerHTML = `<p>Ассистент не вернул отдельные места для карточек.</p>`;
+    placesEl.innerHTML = `
+      <p class="empty-places">
+        Ассистент не вернул отдельные места для карточек.
+      </p>
+    `;
     return;
   }
 
@@ -223,7 +215,7 @@ function renderPlaces(places) {
       "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/512px-No_image_available.svg.png";
 
     card.innerHTML = `
-      <img src="${imageUrl}" alt="${escapeHtml(place.name || "Место")}" loading="lazy">
+      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(place.name || "Место")}" loading="lazy">
       <div class="place-card__body">
         ${
           place.category
@@ -249,6 +241,19 @@ function clearMapMarkers() {
   }
 }
 
+function normalizeNumber(value) {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 function renderMap(places) {
   if (!map || !markerSource) {
     return;
@@ -259,8 +264,11 @@ function renderMap(places) {
   const features = [];
 
   places.forEach((place) => {
-    if (typeof place.lat === "number" && typeof place.lon === "number") {
-      const coordinates = ol.proj.fromLonLat([place.lon, place.lat]);
+    const lat = normalizeNumber(place.lat);
+    const lon = normalizeNumber(place.lon);
+
+    if (lat !== null && lon !== null) {
+      const coordinates = ol.proj.fromLonLat([lon, lat]);
 
       const feature = new ol.Feature({
         geometry: new ol.geom.Point(coordinates),
@@ -340,7 +348,7 @@ async function askAssistant() {
     console.error(error);
     statusEl.textContent = "Ошибка";
     answerEl.textContent =
-      "Произошла ошибка. Проверь, запущен ли backend, правильно ли указан API_URL, создан ли index.json и указан ли OPENROUTER_API_KEY.";
+      "Произошла ошибка. Проверь, запущен ли backend, правильно ли указан API_URL, создан ли index.json и указан ли ROUTERAI_API_KEY.";
   } finally {
     setLoading(false);
   }
