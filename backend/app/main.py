@@ -38,6 +38,12 @@ def health():
         "chunks_loaded": len(vector_store.items),
     }
 
+@app.get("/debug/cors")
+def debug_cors():
+    return {
+        "allowed_origins": ALLOWED_ORIGINS,
+    }
+
 
 @app.get("/cities")
 def cities():
