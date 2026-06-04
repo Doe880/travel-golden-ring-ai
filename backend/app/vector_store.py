@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.config import TOP_K, VECTOR_INDEX_PATH
-from app.embeddings import create_query_embedding
+from app.embeddings import create_query_embedding_async
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -37,7 +37,7 @@ class VectorStore:
 
         self.items = data.get("items", [])
 
-    def search(
+    async def search(
         self,
         query: str,
         city: Optional[str] = None,
@@ -46,7 +46,7 @@ class VectorStore:
         if not self.items:
             return []
 
-        query_vector = create_query_embedding(query)
+        query_vector = await create_query_embedding_async(query)
 
         results = []
 

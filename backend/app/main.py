@@ -38,6 +38,7 @@ def health():
         "chunks_loaded": len(vector_store.items),
     }
 
+
 @app.get("/debug/cors")
 def debug_cors():
     return {
@@ -78,7 +79,16 @@ async def ask(request: AskRequest):
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Ошибка при обращении к RouterAI. "
+                    "Ошибка при обращении к RouterAI chat model. "
+                    f"Подробности: {str(e)}"
+                ),
+            )
+
+        if "routerai embeddings error" in error_text:
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Ошибка при обращении к RouterAI embeddings model. "
                     f"Подробности: {str(e)}"
                 ),
             )

@@ -1,112 +1,119 @@
-from typing import List
+from typing import Any, Dict, List, Union
 
-from sentence_transformers import SentenceTransformer
+import httpx
 
-from app.config import EMBEDDING_PROVIDER, LOCAL_EMBEDDING_MODEL
-
-
-_model = None
-
-
-def get_local_model() -> SentenceTransformer:
-    global _model
-
-    if _model is None:
-        _model = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
-
-    return _model
+from app.config import (
+    EMBEDDING_PROVIDER,
+    ROUTERAI_API_KEY,
+    ROUTERAI_EMBEDDING_MODEL,
+    ROUTERAI_EMBEDDING_URL,
+)
 
 
-def prepare_query_text(text: str) -> str:
+class EmbeddingError(Exception):
+    pass
+
+
+def get_routerai_headers() -> Dict[str, str]:
+    if not ROUTERAI_API_KEY:
+        raise RuntimeError("Не найден ROUTERAI_API_KEY. Проверь backend/.env")
+
+    return {
+        "Authorization": f"Bearer {ROUTERAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+async def request_routerai_embeddings(
+    input_data: Union[str, List[str]],
+) -> List[List[float]]:
     """
-    Для E5-моделей запросы нужно подавать с префиксом query:
+    Получает embeddings через RouterAI.
+
+    RouterAI endpoint:
+    POST https://routerai.ru/api/v1/embeddings
+
+    Payload:
+    {
+      "model": "sentence-transformers/all-minilm-l12-v2",
+      "input": "...",
+      "encoding_format": "float"
+    }
     """
 
-    text = text.strip()
+    if EMBEDDING_PROVIDER != "routerai":
+        raise RuntimeError(
+            f"Неподдерживаемый EMBEDDING_PROVIDER={EMBEDDING_PROVIDER}. "
+            "Сейчас используется routerai."
+        )
 
-    if text.lower().startswith("query:"):
-        return text
+    payload: Dict[str, Any] = {
+        "model": ROUTERAI_EMBEDDING_MODEL,
+        "input": input_data,
+        "encoding_format": "float",
+    }
 
-    return f"query: {text}"
+    async with httpx.AsyncClient(timeout=90) as client:
+        response = await client.post(
+            ROUTERAI_EMBEDDING_URL,
+            headers=get_routerai_headers(),
+            json=payload,
+        )
+
+    if response.status_code >= 400:
+        raise EmbeddingError(
+            f"RouterAI embeddings error {response.status_code}: {response.text}"
+        )
+
+    data = response.json()
+
+    try:
+        embeddings = [item["embedding"] for item in data["data"]]
+    except (KeyError, TypeError) as e:
+        raise EmbeddingError(
+            f"Неожиданный формат ответа RouterAI embeddings: {data}"
+        ) from e
+
+    if not embeddings:
+        raise EmbeddingError("RouterAI вернул пустой список embeddings")
+
+    return embeddings
 
 
-def prepare_passage_text(text: str) -> str:
-    """
-    Для E5-моделей документы/чанки нужно подавать с префиксом passage:
-    """
-
-    text = text.strip()
-
-    if text.lower().startswith("passage:"):
-        return text
-
-    return f"passage: {text}"
-
-
-def create_query_embedding(text: str) -> List[float]:
+async def create_query_embedding_async(text: str) -> List[float]:
     """
     Embedding для пользовательского запроса.
     """
 
-    if EMBEDDING_PROVIDER != "local":
-        raise RuntimeError(
-            f"Неподдерживаемый EMBEDDING_PROVIDER={EMBEDDING_PROVIDER}. "
-            "Сейчас используется local."
-        )
+    embeddings = await request_routerai_embeddings(text)
 
-    model = get_local_model()
-
-    vector = model.encode(
-        prepare_query_text(text),
-        normalize_embeddings=True,
-    )
-
-    return vector.tolist()
+    return embeddings[0]
 
 
-def create_passage_embedding(text: str) -> List[float]:
+async def create_passage_embedding_async(text: str) -> List[float]:
     """
     Embedding для одного чанка базы знаний.
     """
 
-    if EMBEDDING_PROVIDER != "local":
-        raise RuntimeError(
-            f"Неподдерживаемый EMBEDDING_PROVIDER={EMBEDDING_PROVIDER}. "
-            "Сейчас используется local."
-        )
+    embeddings = await request_routerai_embeddings(text)
 
-    model = get_local_model()
-
-    vector = model.encode(
-        prepare_passage_text(text),
-        normalize_embeddings=True,
-    )
-
-    return vector.tolist()
+    return embeddings[0]
 
 
-def create_passage_embeddings_batch(texts: List[str]) -> List[List[float]]:
+async def create_passage_embeddings_batch_async(texts: List[str]) -> List[List[float]]:
     """
     Embeddings для пачки чанков базы знаний.
     """
 
-    if EMBEDDING_PROVIDER != "local":
-        raise RuntimeError(
-            f"Неподдерживаемый EMBEDDING_PROVIDER={EMBEDDING_PROVIDER}. "
-            "Сейчас используется local."
-        )
-
     if not texts:
         return []
 
-    model = get_local_model()
+    embeddings = await request_routerai_embeddings(texts)
 
-    prepared_texts = [prepare_passage_text(text) for text in texts]
+    if len(embeddings) != len(texts):
+        raise EmbeddingError(
+            f"Количество embeddings не совпадает: "
+            f"ожидали {len(texts)}, получили {len(embeddings)}"
+        )
 
-    vectors = model.encode(
-        prepared_texts,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    )
-
-    return [vector.tolist() for vector in vectors]
+    return embeddings

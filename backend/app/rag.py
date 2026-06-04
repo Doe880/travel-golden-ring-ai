@@ -96,7 +96,7 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
     if city:
         search_query = f"{city}. {query}"
 
-    chunks = vector_store.search(
+    chunks = await vector_store.search(
         query=search_query,
         city=city,
     )

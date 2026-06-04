@@ -33,13 +33,6 @@ async def generate_with_routerai(
     max_tokens: Optional[int] = None,
     response_format: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """
-    Генерация ответа через RouterAI.
-
-    RouterAI совместим с OpenAI-style chat completions:
-    POST https://routerai.ru/api/v1/chat/completions
-    """
-
     payload: Dict[str, Any] = {
         "model": model or ROUTERAI_CHAT_MODEL,
         "messages": messages,

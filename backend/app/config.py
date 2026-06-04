@@ -14,6 +14,11 @@ load_dotenv(BASE_DIR / ".env")
 
 ROUTERAI_API_KEY = os.getenv("ROUTERAI_API_KEY", "")
 
+
+# =========================
+# RouterAI chat model
+# =========================
+
 ROUTERAI_CHAT_MODEL = os.getenv(
     "ROUTERAI_CHAT_MODEL",
     "deepseek/deepseek-v4-pro",
@@ -26,26 +31,31 @@ ROUTERAI_CHAT_URL = os.getenv(
 
 
 # =========================
+# RouterAI embedding model
+# =========================
+
+EMBEDDING_PROVIDER = os.getenv(
+    "EMBEDDING_PROVIDER",
+    "routerai",
+)
+
+ROUTERAI_EMBEDDING_MODEL = os.getenv(
+    "ROUTERAI_EMBEDDING_MODEL",
+    "sentence-transformers/all-minilm-l12-v2",
+)
+
+ROUTERAI_EMBEDDING_URL = os.getenv(
+    "ROUTERAI_EMBEDDING_URL",
+    "https://routerai.ru/api/v1/embeddings",
+)
+
+
+# =========================
 # Generation settings
 # =========================
 
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.4"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1800"))
-
-
-# =========================
-# Local embeddings
-# =========================
-
-EMBEDDING_PROVIDER = os.getenv(
-    "EMBEDDING_PROVIDER",
-    "local",
-)
-
-LOCAL_EMBEDDING_MODEL = os.getenv(
-    "LOCAL_EMBEDDING_MODEL",
-    "intfloat/multilingual-e5-small",
-)
 
 
 # =========================
