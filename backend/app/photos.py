@@ -11,8 +11,8 @@ RU_WIKI_API_URL = "https://ru.wikipedia.org/w/api.php"
 async def get_wikipedia_photo_url(query: str) -> Optional[str]:
     """
     Ищет картинку через русскую Wikipedia:
-    1. search
-    2. pageimages
+    1. search;
+    2. pageimages.
     """
 
     try:
@@ -93,6 +93,7 @@ async def get_commons_photo_url(query: str) -> Optional[str]:
 
         for page in pages.values():
             imageinfo = page.get("imageinfo", [])
+
             if imageinfo:
                 return imageinfo[0].get("url")
 

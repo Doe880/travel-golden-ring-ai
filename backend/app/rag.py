@@ -2,6 +2,8 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from app.chunker import build_all_chunks
+from app.config import KNOWLEDGE_BASE_DIR
 from app.llm_client import generate_with_routerai
 from app.photos import get_place_photo_url
 from app.vector_store import vector_store
@@ -41,8 +43,8 @@ SYSTEM_PROMPT = """
 }
 
 Важно:
-- places должен содержать реальные места из контекста.
-- Если в контексте есть строки "Координаты: 56.0000, 40.0000", обязательно используй их.
+- places должен содержать реальные места из контекста или из списка извлечённых мест.
+- Если в списке есть координаты, обязательно используй их.
 - lat и lon должны быть числами, а не строками.
 - Не добавляй sources в ответ.
 """
@@ -82,143 +84,247 @@ def build_context(chunks: List[Dict[str, Any]]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def safe_float(value: str) -> Optional[float]:
+def safe_float(value: Any) -> Optional[float]:
     try:
-        return float(value.replace(",", ".").strip())
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        return float(str(value).replace(",", ".").strip())
     except Exception:
         return None
 
 
-def normalize_place(place: Dict[str, Any], default_city: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def normalize_city_name(value: Optional[str]) -> str:
+    return str(value or "").strip().lower().replace("ё", "е")
+
+
+def normalize_place_name(value: Optional[str]) -> str:
+    return str(value or "").strip().lower().replace("ё", "е")
+
+
+def normalize_place(
+    place: Dict[str, Any],
+    default_city: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     name = str(place.get("name") or "").strip()
 
     if not name:
         return None
 
-    lat = place.get("lat")
-    lon = place.get("lon")
+    lat = safe_float(place.get("lat"))
+    lon = safe_float(place.get("lon"))
 
-    if isinstance(lat, str):
-        lat = safe_float(lat)
-
-    if isinstance(lon, str):
-        lon = safe_float(lon)
-
-    normalized = {
+    return {
         "name": name,
         "city": place.get("city") or default_city,
         "description": place.get("description") or "",
-        "lat": lat if isinstance(lat, (int, float)) else None,
-        "lon": lon if isinstance(lon, (int, float)) else None,
+        "lat": lat,
+        "lon": lon,
         "category": place.get("category") or "достопримечательность",
     }
 
-    return normalized
+
+def extract_description_from_block(block: str) -> str:
+    description = ""
+
+    description_match = re.search(
+        r"Подходит:.*?\n\n(.+)",
+        block,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    if description_match:
+        description = description_match.group(1).strip()
+        description = re.split(
+            r"\n###|\n##|\nТип:|\nКоординаты:|\nВремя на посещение:|\nПодходит:",
+            description,
+        )[0].strip()
+
+    if not description:
+        lines = []
+
+        for line in block.splitlines():
+            line = line.strip()
+
+            if not line:
+                continue
+
+            lower = line.lower()
+
+            if line.startswith("#"):
+                continue
+
+            if lower.startswith("город:"):
+                continue
+
+            if lower.startswith("раздел:"):
+                continue
+
+            if lower.startswith("тип:"):
+                continue
+
+            if lower.startswith("координаты:"):
+                continue
+
+            if lower.startswith("время"):
+                continue
+
+            if lower.startswith("подходит:"):
+                continue
+
+            lines.append(line)
+
+        description = " ".join(lines[:2])
+
+    return description[:350]
 
 
-def extract_places_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def extract_places_from_text(text: str, city: Optional[str]) -> List[Dict[str, Any]]:
     """
-    Резервный механизм.
-    Если модель не вернула places, backend сам достаёт места из markdown-чанков.
+    Ищет в markdown-тексте блоки достопримечательностей с координатами.
 
-    Ищет блоки вида:
+    Поддерживает формат:
 
-    ### Ростовский кремль
-
-    Тип: достопримечательность
-    Координаты: 57.1840, 39.4160
-    ...
+    ### Плещеево озеро
+    Тип: природа
+    Координаты: 56.7653, 38.7770
     """
 
     places: List[Dict[str, Any]] = []
-    seen = set()
 
-    for chunk in chunks:
-        text = chunk.get("text", "")
-        city = chunk.get("city")
+    blocks = re.split(r"\n(?=###\s+)", text)
 
-        blocks = re.split(r"\n(?=###\s+)", text)
+    for block in blocks:
+        title_match = re.search(r"###\s+(.+)", block)
+        coords_match = re.search(
+            r"Координаты:\s*([0-9.\-]+)\s*,\s*([0-9.\-]+)",
+            block,
+            flags=re.IGNORECASE,
+        )
 
-        for block in blocks:
-            title_match = re.search(r"###\s+(.+)", block)
-            coords_match = re.search(
-                r"Координаты:\s*([0-9.\-]+)\s*,\s*([0-9.\-]+)",
-                block,
-                flags=re.IGNORECASE,
-            )
+        if not title_match or not coords_match:
+            continue
 
-            if not title_match or not coords_match:
-                continue
+        name = title_match.group(1).strip()
+        lat = safe_float(coords_match.group(1))
+        lon = safe_float(coords_match.group(2))
 
-            name = title_match.group(1).strip()
-            lat = safe_float(coords_match.group(1))
-            lon = safe_float(coords_match.group(2))
+        if lat is None or lon is None:
+            continue
 
-            if lat is None or lon is None:
-                continue
+        type_match = re.search(r"Тип:\s*(.+)", block, flags=re.IGNORECASE)
+        category = type_match.group(1).strip() if type_match else "достопримечательность"
 
-            type_match = re.search(r"Тип:\s*(.+)", block, flags=re.IGNORECASE)
-            category = type_match.group(1).strip() if type_match else "достопримечательность"
-
-            description = ""
-
-            description_match = re.search(
-                r"Подходит:.*?\n\n(.+)",
-                block,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-
-            if description_match:
-                description = description_match.group(1).strip()
-                description = re.split(r"\n###|\n##|\nТип:|\nКоординаты:", description)[0].strip()
-
-            if not description:
-                lines = [
-                    line.strip()
-                    for line in block.splitlines()
-                    if line.strip()
-                    and not line.startswith("###")
-                    and not line.lower().startswith("тип:")
-                    and not line.lower().startswith("координаты:")
-                    and not line.lower().startswith("время")
-                    and not line.lower().startswith("подходит:")
-                ]
-                description = " ".join(lines[:2])
-
-            key = f"{city}|{name}".lower()
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-
-            places.append(
-                {
-                    "name": name,
-                    "city": city,
-                    "description": description[:350],
-                    "lat": lat,
-                    "lon": lon,
-                    "category": category,
-                }
-            )
+        places.append(
+            {
+                "name": name,
+                "city": city,
+                "description": extract_description_from_block(block),
+                "lat": lat,
+                "lon": lon,
+                "category": category,
+            }
+        )
 
     return places
 
 
+def deduplicate_places(places: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    result = []
+    seen = set()
+
+    for place in places:
+        name = normalize_place_name(place.get("name"))
+        city = normalize_city_name(place.get("city"))
+        key = f"{city}|{name}"
+
+        if not name or key in seen:
+            continue
+
+        seen.add(key)
+        result.append(place)
+
+    return result
+
+
+def extract_places_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    places: List[Dict[str, Any]] = []
+
+    for chunk in chunks:
+        text = chunk.get("text", "")
+        city = chunk.get("city")
+        places.extend(extract_places_from_text(text, city))
+
+    return deduplicate_places(places)
+
+
+def extract_places_for_city_from_knowledge_base(city: Optional[str]) -> List[Dict[str, Any]]:
+    """
+    Важный резервный механизм.
+
+    Если в top-k чанках оказались только "Маршрут на 1 день" или "Советы",
+    там может не быть координат. Тогда мы читаем весь markdown-файл города
+    и достаём все места с координатами оттуда.
+    """
+
+    if not city:
+        return []
+
+    target_city = normalize_city_name(city)
+
+    try:
+        all_chunks = build_all_chunks(KNOWLEDGE_BASE_DIR)
+    except Exception:
+        return []
+
+    city_chunks = [
+        chunk
+        for chunk in all_chunks
+        if normalize_city_name(chunk.get("city")) == target_city
+    ]
+
+    return extract_places_from_chunks(city_chunks)
+
+
+def find_places_mentioned_in_answer(
+    answer: str,
+    available_places: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Если модель написала в answer названия мест, но не вернула places,
+    выбираем из базы те места, которые упоминаются в тексте ответа.
+    """
+
+    answer_norm = normalize_place_name(answer)
+
+    mentioned = []
+
+    for place in available_places:
+        name = place.get("name", "")
+        name_norm = normalize_place_name(name)
+
+        if name_norm and name_norm in answer_norm:
+            mentioned.append(place)
+
+    return deduplicate_places(mentioned)
+
+
 def merge_places(
     model_places: List[Dict[str, Any]],
-    fallback_places: List[Dict[str, Any]],
+    available_places: List[Dict[str, Any]],
+    answer: str,
     default_city: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Объединяет places от модели и places, извлечённые из базы.
-    Если модель вернула место без координат, пытаемся дополнить координатами из fallback.
+    Объединяет:
+    1. places от модели;
+    2. места, найденные в базе знаний;
+    3. места, упомянутые в тексте ответа.
     """
 
-    fallback_by_name = {
-        str(place.get("name", "")).strip().lower(): place
-        for place in fallback_places
+    available_by_name = {
+        normalize_place_name(place.get("name")): place
+        for place in available_places
         if place.get("name")
     }
 
@@ -231,26 +337,41 @@ def merge_places(
         if not normalized:
             continue
 
-        key = normalized["name"].lower()
-        fallback = fallback_by_name.get(key)
+        key = normalize_place_name(normalized.get("name"))
+        fallback = available_by_name.get(key)
 
         if fallback:
             if normalized.get("lat") is None:
                 normalized["lat"] = fallback.get("lat")
+
             if normalized.get("lon") is None:
                 normalized["lon"] = fallback.get("lon")
+
             if not normalized.get("description"):
                 normalized["description"] = fallback.get("description", "")
+
             if not normalized.get("category"):
                 normalized["category"] = fallback.get("category", "достопримечательность")
 
-        if key not in seen:
+            if not normalized.get("city"):
+                normalized["city"] = fallback.get("city")
+
+        if key and key not in seen:
             seen.add(key)
             merged.append(normalized)
 
+    mentioned_places = find_places_mentioned_in_answer(answer, available_places)
+
+    for place in mentioned_places:
+        key = normalize_place_name(place.get("name"))
+
+        if key and key not in seen:
+            seen.add(key)
+            merged.append(place)
+
     if not merged:
-        for place in fallback_places:
-            key = str(place.get("name", "")).lower()
+        for place in available_places:
+            key = normalize_place_name(place.get("name"))
 
             if key and key not in seen:
                 seen.add(key)
@@ -286,15 +407,21 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
     )
 
     context = build_context(chunks)
-    fallback_places = extract_places_from_chunks(chunks)
 
-    places_hint = json.dumps(fallback_places, ensure_ascii=False, indent=2)
+    places_from_context = extract_places_from_chunks(chunks)
+    places_from_city_file = extract_places_for_city_from_knowledge_base(city)
+
+    available_places = deduplicate_places(
+        places_from_context + places_from_city_file
+    )
+
+    places_hint = json.dumps(available_places, ensure_ascii=False, indent=2)
 
     user_prompt = f"""
 Контекст из базы знаний:
 {context}
 
-Извлечённые из базы места с координатами:
+Доступные места с координатами из базы знаний:
 {places_hint}
 
 Запрос пользователя:
@@ -304,7 +431,7 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
 {city or "не выбран"}
 
 Сформируй ответ строго в JSON-формате.
-Обязательно верни places с координатами, если они есть в списке извлечённых мест.
+Обязательно верни places с координатами из списка доступных мест, если они относятся к маршруту.
 Не возвращай sources.
 """.strip()
 
@@ -332,6 +459,8 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
             "places": [],
         }
 
+    answer = parsed.get("answer", raw_text)
+
     raw_places = parsed.get("places", [])
 
     if not isinstance(raw_places, list):
@@ -339,14 +468,15 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
 
     places = merge_places(
         model_places=raw_places,
-        fallback_places=fallback_places,
+        available_places=available_places,
+        answer=answer,
         default_city=parsed.get("city") or city,
     )
 
     places = await enrich_places_with_photos(places)
 
     return {
-        "answer": parsed.get("answer", raw_text),
+        "answer": answer,
         "city": parsed.get("city") or city,
         "places": places,
         "sources": [],

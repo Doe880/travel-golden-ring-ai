@@ -19,6 +19,8 @@ let selectedCity = null;
 let map = null;
 let markerSource = null;
 let markerLayer = null;
+let routeSource = null;
+let routeLayer = null;
 let popupOverlay = null;
 
 const cityButtonsEl = document.getElementById("cityButtons");
@@ -76,6 +78,12 @@ function initQuickActions() {
 
 function initMap() {
   markerSource = new ol.source.Vector();
+  routeSource = new ol.source.Vector();
+
+  routeLayer = new ol.layer.Vector({
+    source: routeSource,
+    style: createRouteStyle(),
+  });
 
   markerLayer = new ol.layer.Vector({
     source: markerSource,
@@ -88,7 +96,7 @@ function initMap() {
 
   map = new ol.Map({
     target: "map",
-    layers: [osmLayer, markerLayer],
+    layers: [osmLayer, routeLayer, markerLayer],
     view: new ol.View({
       center: ol.proj.fromLonLat([39.8, 56.9]),
       zoom: 6,
@@ -118,7 +126,7 @@ function initMap() {
   map.on("singleclick", (event) => {
     const feature = map.forEachFeatureAtPixel(event.pixel, (item) => item);
 
-    if (!feature) {
+    if (!feature || feature.get("featureType") !== "place") {
       popupOverlay.setPosition(undefined);
       return;
     }
@@ -155,6 +163,16 @@ function createMarkerStyle() {
         color: "#ffffff",
         width: 3,
       }),
+    }),
+  });
+}
+
+function createRouteStyle() {
+  return new ol.style.Style({
+    stroke: new ol.style.Stroke({
+      color: "#a3422b",
+      width: 4,
+      lineDash: [8, 8],
     }),
   });
 }
@@ -231,9 +249,13 @@ function renderPlaces(places) {
   });
 }
 
-function clearMapMarkers() {
+function clearMapObjects() {
   if (markerSource) {
     markerSource.clear();
+  }
+
+  if (routeSource) {
+    routeSource.clear();
   }
 
   if (popupOverlay) {
@@ -255,13 +277,14 @@ function normalizeNumber(value) {
 }
 
 function renderMap(places) {
-  if (!map || !markerSource) {
+  if (!map || !markerSource || !routeSource) {
     return;
   }
 
-  clearMapMarkers();
+  clearMapObjects();
 
   const features = [];
+  const routeCoordinates = [];
 
   places.forEach((place) => {
     const lat = normalizeNumber(place.lat);
@@ -272,6 +295,7 @@ function renderMap(places) {
 
       const feature = new ol.Feature({
         geometry: new ol.geom.Point(coordinates),
+        featureType: "place",
         name: place.name || "Место",
         city: place.city || "",
         description: place.description || "",
@@ -279,10 +303,20 @@ function renderMap(places) {
       });
 
       features.push(feature);
+      routeCoordinates.push(coordinates);
     }
   });
 
   markerSource.addFeatures(features);
+
+  if (routeCoordinates.length > 1) {
+    const routeFeature = new ol.Feature({
+      geometry: new ol.geom.LineString(routeCoordinates),
+      featureType: "route",
+    });
+
+    routeSource.addFeature(routeFeature);
+  }
 
   if (features.length === 0) {
     setGoldenRingMapView();
