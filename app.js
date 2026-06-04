@@ -348,7 +348,7 @@ async function askAssistant() {
     console.error(error);
     statusEl.textContent = "Ошибка";
     answerEl.textContent =
-      "Произошла ошибка. Проверь, запущен ли backend, правильно ли указан API_URL, создан ли index.json и указан ли ROUTERAI_API_KEY.";
+      "Произошла ошибка. Проверь backend, API_URL, index.json и ROUTERAI_API_KEY.";
   } finally {
     setLoading(false);
   }
