@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, Optional
 from urllib.parse import quote
 
 import httpx
@@ -8,13 +8,56 @@ COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
 RU_WIKI_API_URL = "https://ru.wikipedia.org/w/api.php"
 
 
-async def get_wikipedia_photo_url(query: str) -> Optional[str]:
-    """
-    Ищет картинку через русскую Wikipedia:
-    1. search;
-    2. pageimages.
-    """
+PLACE_PHOTO_FALLBACKS: Dict[str, str] = {
+    # Суздаль
+    "суздальский кремль": "https://commons.wikimedia.org/wiki/Special:FilePath/Suzdal%20Kremlin%202012.jpg",
+    "музей деревянного зодчества": "https://commons.wikimedia.org/wiki/Special:FilePath/Suzdal%20Museum%20of%20Wooden%20Architecture%202012.jpg",
+    "спасо-евфимиев монастырь": "https://commons.wikimedia.org/wiki/Special:FilePath/Spaso-Evfimiev%20Monastery%20Suzdal.jpg",
+    "торговая площадь": "https://commons.wikimedia.org/wiki/Special:FilePath/Suzdal%20Trading%20Rows.jpg",
 
+    # Переславль-Залесский
+    "плещеево озеро": "https://commons.wikimedia.org/wiki/Special:FilePath/Lake%20Pleshcheyevo.jpg",
+    "спасо-преображенский собор": "https://commons.wikimedia.org/wiki/Special:FilePath/Pereslavl-Zalessky%20Transfiguration%20Cathedral.jpg",
+    "синий камень": "https://commons.wikimedia.org/wiki/Special:FilePath/Blue%20Stone%20Pereslavl.jpg",
+
+    # Ростов Великий
+    "ростовский кремль": "https://commons.wikimedia.org/wiki/Special:FilePath/Rostov%20Kremlin%202012.jpg",
+    "озеро неро": "https://commons.wikimedia.org/wiki/Special:FilePath/Lake%20Nero%20Rostov.jpg",
+
+    # Ярославль
+    "стрелка": "https://commons.wikimedia.org/wiki/Special:FilePath/Yaroslavl%20Strelka.jpg",
+    "церковь ильи пророка": "https://commons.wikimedia.org/wiki/Special:FilePath/Church%20of%20Elijah%20the%20Prophet%20Yaroslavl.jpg",
+    "спасо-преображенский монастырь": "https://commons.wikimedia.org/wiki/Special:FilePath/Yaroslavl%20Spaso-Preobrazhensky%20Monastery.jpg",
+
+    # Кострома
+    "ипатьевский монастырь": "https://commons.wikimedia.org/wiki/Special:FilePath/Ipatiev%20Monastery%20Kostroma.jpg",
+    "сусанинская площадь": "https://commons.wikimedia.org/wiki/Special:FilePath/Susaninskaya%20Square%20Kostroma.jpg",
+
+    # Владимир
+    "золотые ворота": "https://commons.wikimedia.org/wiki/Special:FilePath/Golden%20Gate%20Vladimir.jpg",
+    "успенский собор": "https://commons.wikimedia.org/wiki/Special:FilePath/Dormition%20Cathedral%20Vladimir.jpg",
+    "дмитриевский собор": "https://commons.wikimedia.org/wiki/Special:FilePath/Demetrius%20Cathedral%20Vladimir.jpg",
+}
+
+
+def normalize_key(value: Optional[str]) -> str:
+    return str(value or "").strip().lower().replace("ё", "е")
+
+
+def find_fallback_photo(name: str) -> Optional[str]:
+    key = normalize_key(name)
+
+    if key in PLACE_PHOTO_FALLBACKS:
+        return PLACE_PHOTO_FALLBACKS[key]
+
+    for place_name, url in PLACE_PHOTO_FALLBACKS.items():
+        if place_name in key or key in place_name:
+            return url
+
+    return None
+
+
+async def get_wikipedia_photo_url(query: str) -> Optional[str]:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             search_response = await client.get(
@@ -67,10 +110,6 @@ async def get_wikipedia_photo_url(query: str) -> Optional[str]:
 
 
 async def get_commons_photo_url(query: str) -> Optional[str]:
-    """
-    Ищет фото в Wikimedia Commons.
-    """
-
     params = {
         "action": "query",
         "format": "json",
@@ -104,10 +143,10 @@ async def get_commons_photo_url(query: str) -> Optional[str]:
 
 
 async def get_place_photo_url(name: str, city: Optional[str] = None) -> Optional[str]:
-    """
-    Основная функция получения фото места.
-    Сначала ищем в русской Wikipedia, потом в Wikimedia Commons.
-    """
+    fallback_url = find_fallback_photo(name)
+
+    if fallback_url:
+        return fallback_url
 
     queries = []
 

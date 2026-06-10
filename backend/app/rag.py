@@ -47,6 +47,7 @@ SYSTEM_PROMPT = """
 - Если в списке есть координаты, обязательно используй их.
 - lat и lon должны быть числами, а не строками.
 - Не добавляй sources в ответ.
+- Не возвращай JSON внутри поля answer.
 """
 
 
@@ -64,6 +65,54 @@ def clean_json_text(text: str) -> str:
         return text[start : end + 1]
 
     return text
+
+
+def try_parse_json(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Аккуратно пытается распарсить JSON.
+    Нужно потому, что модель иногда возвращает:
+    1. нормальный JSON;
+    2. JSON в markdown-блоке;
+    3. JSON-строку внутри answer.
+    """
+
+    if not text:
+        return None
+
+    cleaned = clean_json_text(text)
+
+    try:
+        parsed = json.loads(cleaned)
+
+        if isinstance(parsed, dict):
+            return parsed
+
+        if isinstance(parsed, str):
+            nested = try_parse_json(parsed)
+            return nested
+
+    except json.JSONDecodeError:
+        return None
+
+    return None
+
+
+def unwrap_nested_answer(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Если answer сам содержит JSON-строку вида:
+    {"answer": "...", "places": [...]}
+    то достаём внутренний JSON.
+    """
+
+    answer = parsed.get("answer")
+
+    if isinstance(answer, str):
+        nested = try_parse_json(answer)
+
+        if nested and isinstance(nested, dict):
+            return nested
+
+    return parsed
 
 
 def build_context(chunks: List[Dict[str, Any]]) -> str:
@@ -121,6 +170,7 @@ def normalize_place(
         "lat": lat,
         "lon": lon,
         "category": place.get("category") or "достопримечательность",
+        "photo_url": place.get("photo_url"),
     }
 
 
@@ -180,16 +230,6 @@ def extract_description_from_block(block: str) -> str:
 
 
 def extract_places_from_text(text: str, city: Optional[str]) -> List[Dict[str, Any]]:
-    """
-    Ищет в markdown-тексте блоки достопримечательностей с координатами.
-
-    Поддерживает формат:
-
-    ### Плещеево озеро
-    Тип: природа
-    Координаты: 56.7653, 38.7770
-    """
-
     places: List[Dict[str, Any]] = []
 
     blocks = re.split(r"\n(?=###\s+)", text)
@@ -259,14 +299,6 @@ def extract_places_from_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, A
 
 
 def extract_places_for_city_from_knowledge_base(city: Optional[str]) -> List[Dict[str, Any]]:
-    """
-    Важный резервный механизм.
-
-    Если в top-k чанках оказались только "Маршрут на 1 день" или "Советы",
-    там может не быть координат. Тогда мы читаем весь markdown-файл города
-    и достаём все места с координатами оттуда.
-    """
-
     if not city:
         return []
 
@@ -290,11 +322,6 @@ def find_places_mentioned_in_answer(
     answer: str,
     available_places: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """
-    Если модель написала в answer названия мест, но не вернула places,
-    выбираем из базы те места, которые упоминаются в тексте ответа.
-    """
-
     answer_norm = normalize_place_name(answer)
 
     mentioned = []
@@ -315,13 +342,6 @@ def merge_places(
     answer: str,
     default_city: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Объединяет:
-    1. places от модели;
-    2. места, найденные в базе знаний;
-    3. места, упомянутые в тексте ответа.
-    """
-
     available_by_name = {
         normalize_place_name(place.get("name")): place
         for place in available_places
@@ -433,6 +453,7 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
 Сформируй ответ строго в JSON-формате.
 Обязательно верни places с координатами из списка доступных мест, если они относятся к маршруту.
 Не возвращай sources.
+Не возвращай JSON внутри поля answer.
 """.strip()
 
     raw_text = await generate_with_routerai(
@@ -448,18 +469,21 @@ async def ask_travel_agent(query: str, city: Optional[str] = None) -> Dict[str, 
         ],
     )
 
-    json_text = clean_json_text(raw_text)
+    parsed = try_parse_json(raw_text)
 
-    try:
-        parsed = json.loads(json_text)
-    except json.JSONDecodeError:
+    if not parsed:
         parsed = {
             "answer": raw_text,
             "city": city,
             "places": [],
         }
 
+    parsed = unwrap_nested_answer(parsed)
+
     answer = parsed.get("answer", raw_text)
+
+    if not isinstance(answer, str):
+        answer = str(answer)
 
     raw_places = parsed.get("places", [])
 

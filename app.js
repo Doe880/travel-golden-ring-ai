@@ -202,14 +202,64 @@ function setLoading(isLoading) {
     : "Готов к запросу";
 }
 
+function normalizeAnswerText(rawAnswer) {
+  if (!rawAnswer) {
+    return "Ответ пустой.";
+  }
+
+  if (typeof rawAnswer !== "string") {
+    return String(rawAnswer);
+  }
+
+  const trimmed = rawAnswer.trim();
+
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+
+      if (parsed.answer) {
+        return normalizeAnswerText(parsed.answer);
+      }
+    } catch (e) {
+      return rawAnswer;
+    }
+  }
+
+  return rawAnswer;
+}
+
 function renderAnswer(data) {
-  const answer = data.answer || "Ответ пустой.";
+  const answer = normalizeAnswerText(data.answer);
 
   if (window.marked) {
     answerEl.innerHTML = marked.parse(answer);
   } else {
     answerEl.textContent = answer;
   }
+}
+
+function createPlaceImageHtml(place, imageUrl) {
+  const name = escapeHtml(place.name || "Место");
+
+  if (!imageUrl) {
+    return `
+      <div class="place-card__image-placeholder">
+        <span>${name}</span>
+      </div>
+    `;
+  }
+
+  return `
+    <img
+      src="${escapeHtml(imageUrl)}"
+      alt="${name}"
+      loading="lazy"
+      onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+    >
+    <div class="place-card__image-placeholder" style="display:none;">
+      <span>${name}</span>
+    </div>
+  `;
 }
 
 function renderPlaces(places) {
@@ -228,12 +278,10 @@ function renderPlaces(places) {
     const card = document.createElement("article");
     card.className = "place-card";
 
-    const imageUrl =
-      place.photo_url ||
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ac/No_image_available.svg/512px-No_image_available.svg.png";
+    const imageUrl = place.photo_url || "";
 
     card.innerHTML = `
-      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(place.name || "Место")}" loading="lazy">
+      ${createPlaceImageHtml(place, imageUrl)}
       <div class="place-card__body">
         ${
           place.category
